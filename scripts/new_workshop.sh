@@ -71,8 +71,6 @@ cat > "$OUTPUT_FILE" <<EOF
 # Usage:
 #   docker compose -f docker-compose.yml -f $(basename "$OUTPUT_FILE") up -d
 
-version: "3.9"
-
 # Workshop-specific network (isolated from other workshops)
 networks:
   mawf-net-${NAME}:

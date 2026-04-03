@@ -1,121 +1,182 @@
 """
-shared/retry.py — call_api_with_retry() for all Anthropic API calls.
+shared/retry.py
 
-All services import from here. services/orchestrator/retry.py re-exports
-this module for backwards compatibility.
-
-Rule: Never call client.messages.create() directly in agent code.
-      Always go through call_api_with_retry().
+Retry utilities and JSON extraction for Claude API calls.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-import random
-from typing import Any, Callable, Coroutine, TypeVar
+import re
+from typing import Any, Awaitable, Callable, TypeVar
 
-import httpx
+from anthropic import APIError, RateLimitError
 
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
-_BASE_DELAY_S: float = 1.0
-_MAX_DELAY_S: float = 60.0
-_MAX_RETRIES: int = 8
-_RETRYABLE_STATUS_CODES: frozenset[int] = frozenset({429, 529})
-
-
-def _jitter(delay: float) -> float:
-    """Add ±25% jitter to a delay value."""
-    return delay * (0.75 + random.random() * 0.5)
+DEFAULT_MAX_RETRIES = 3
+DEFAULT_BASE_DELAY = 1.0
+DEFAULT_MAX_DELAY = 30.0
 
 
 async def call_api_with_retry(
-    fn: Callable[..., Coroutine[Any, Any, T]],
+    func: Callable[..., Awaitable[T]],
     *args: Any,
-    max_retries: int = _MAX_RETRIES,
+    max_retries: int = DEFAULT_MAX_RETRIES,
+    base_delay: float = DEFAULT_BASE_DELAY,
+    max_delay: float = DEFAULT_MAX_DELAY,
     **kwargs: Any,
 ) -> T:
     """
-    Call an async function and retry on HTTP 429/529 with exponential backoff + jitter.
-
+    Call an async function with exponential backoff retry on transient errors.
+    
     Args:
-        fn:          An async callable (typically client.messages.create).
-        *args:       Positional args forwarded to fn.
-        max_retries: Maximum retry attempts.
-        **kwargs:    Keyword args forwarded to fn.
-
+        func: Async function to call
+        *args: Positional arguments for func
+        max_retries: Maximum number of retry attempts
+        base_delay: Initial delay in seconds
+        max_delay: Maximum delay between retries
+        **kwargs: Keyword arguments for func
+    
+    Returns:
+        Result of the function call
+    
     Raises:
-        The last exception after all retries are exhausted.
+        The last exception if all retries are exhausted
     """
-    attempt = 0
-    delay = _BASE_DELAY_S
-
-    while True:
+    last_error: Exception | None = None
+    
+    for attempt in range(max_retries + 1):
         try:
-            return await fn(*args, **kwargs)
-
-        except Exception as exc:  # noqa: BLE001
-            status_code = _extract_status_code(exc)
-
-            if status_code not in _RETRYABLE_STATUS_CODES:
-                raise
-
-            attempt += 1
-            if attempt > max_retries:
-                logger.error(
-                    "call_api_with_retry: exhausted %d retries (last status=%s): %s",
-                    max_retries, status_code, exc,
+            return await func(*args, **kwargs)
+        except RateLimitError as e:
+            last_error = e
+            if attempt < max_retries:
+                delay = min(base_delay * (2 ** attempt), max_delay)
+                logger.warning(
+                    "Rate limited (attempt %d/%d), retrying in %.1fs: %s",
+                    attempt + 1, max_retries + 1, delay, e
                 )
+                await asyncio.sleep(delay)
+            else:
+                logger.error("Rate limit exceeded after %d attempts", max_retries + 1)
+        except APIError as e:
+            last_error = e
+            # Only retry on 5xx errors (server-side issues)
+            if e.status_code and 500 <= e.status_code < 600 and attempt < max_retries:
+                delay = min(base_delay * (2 ** attempt), max_delay)
+                logger.warning(
+                    "API error %d (attempt %d/%d), retrying in %.1fs: %s",
+                    e.status_code, attempt + 1, max_retries + 1, delay, e
+                )
+                await asyncio.sleep(delay)
+            else:
                 raise
-
-            sleep_for = _jitter(min(delay, _MAX_DELAY_S))
-            logger.warning(
-                "call_api_with_retry: status=%s attempt=%d/%d sleeping=%.2fs",
-                status_code, attempt, max_retries, sleep_for,
-            )
-            await asyncio.sleep(sleep_for)
-            delay = min(delay * 2, _MAX_DELAY_S)
-
-
-def _extract_status_code(exc: Exception) -> int | None:
-    if hasattr(exc, "status_code"):
-        return int(exc.status_code)
-    if isinstance(exc, httpx.HTTPStatusError):
-        return exc.response.status_code
-    return None
+    
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("Unexpected retry loop exit")
 
 
 def extract_json(text: str) -> str:
     """
-    Extract the JSON substring from Claude's response text.
-
-    Handles three formats:
-      1. Raw JSON (the ideal case)
-      2. ```json\\n...\\n``` markdown fences
-      3. First '{' to last '}' heuristic
-
-    Returns the best candidate string. Caller must still json.loads() it.
-    Raises ValueError if no JSON-like content is found.
+    Extract JSON from Claude's response, handling markdown fences and other wrappers.
+    
+    Args:
+        text: Raw response text that may contain JSON
+    
+    Returns:
+        Extracted JSON string
+    
+    Raises:
+        ValueError: If no valid JSON structure is found
     """
+    if not text or not text.strip():
+        raise ValueError("Empty input")
+    
     text = text.strip()
-
-    # 1. Try as-is
-    if text.startswith("{") and text.endswith("}"):
-        return text
-
-    # 2. Strip markdown fences
-    import re
-    fence_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+    
+    # Try extracting from markdown code fence first
+    fence_match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", text, re.DOTALL)
     if fence_match:
-        return fence_match.group(1).strip()
+        candidate = fence_match.group(1).strip()
+        if candidate and (candidate.startswith("{") or candidate.startswith("[")):
+            return candidate
+    
+    # If text itself looks like JSON, return it directly
+    if text.startswith("{") or text.startswith("["):
+        return text
+    
+    # Try to find a JSON object or array using robust bracket matching
+    result = _extract_json_robust(text)
+    if result:
+        return result
+    
+    raise ValueError(f"No JSON found in text: {text[:100]}...")
 
-    # 3. First '{' to last '}'
-    start = text.find("{")
-    end = text.rfind("}")
-    if start != -1 and end != -1 and end > start:
-        return text[start : end + 1]
 
-    raise ValueError(f"No JSON object found in text: {text[:200]!r}")
+def _extract_json_robust(text: str) -> str | None:
+    """
+    Extract JSON from text using proper bracket matching with escape handling.
+    
+    Handles:
+    - Nested objects and arrays
+    - Escaped quotes within strings
+    - Mixed content before/after JSON
+    
+    Returns:
+        Extracted JSON string or None if not found
+    """
+    # Find the first { or [
+    start_obj = text.find("{")
+    start_arr = text.find("[")
+    
+    if start_obj == -1 and start_arr == -1:
+        return None
+    
+    # Determine which comes first
+    if start_obj == -1:
+        start = start_arr
+        open_char, close_char = "[", "]"
+    elif start_arr == -1:
+        start = start_obj
+        open_char, close_char = "{", "}"
+    else:
+        if start_obj < start_arr:
+            start = start_obj
+            open_char, close_char = "{", "}"
+        else:
+            start = start_arr
+            open_char, close_char = "[", "]"
+    
+    # Track depth with proper string and escape handling
+    depth = 0
+    in_string = False
+    i = start
+    text_len = len(text)
+    
+    while i < text_len:
+        char = text[i]
+        
+        # Handle escape sequences inside strings
+        if in_string and char == "\\" and i + 1 < text_len:
+            # Skip the next character (it's escaped)
+            i += 2
+            continue
+        
+        if char == '"':
+            in_string = not in_string
+        elif not in_string:
+            if char == open_char:
+                depth += 1
+            elif char == close_char:
+                depth -= 1
+                if depth == 0:
+                    return text[start:i + 1]
+        
+        i += 1
+    
+    return None

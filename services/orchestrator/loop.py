@@ -1,5 +1,4 @@
-"""
-services/orchestrator/loop.py
+"""services/orchestrator/loop.py
 
 The core agent loop controller.
 
@@ -39,11 +38,10 @@ from shared.constants import (
 )
 from shared.db import log_event, update_session_status, write_iteration
 from shared.redis_client import events_channel, publish, push_dead_letter
-from shared.retry import call_api_with_retry  # noqa: F401 — available for orchestrator LLM calls
 
 logger = logging.getLogger(__name__)
 
-# ── Service URLs (resolved from env at import time) ────────────────────────────
+# — Service URLs (resolved from env at import time) ————————————————————————————
 CODER_URL    = os.getenv("CODER_URL",    "http://coder:8001")
 REVIEWER_URL = os.getenv("REVIEWER_URL", "http://reviewer:8002")
 QA_URL       = os.getenv("QA_URL",       "http://qa:8003")
@@ -90,6 +88,9 @@ class LoopController:
         self._terminated = False
         self._terminate_reason: str | None = None
         self._output_hashes: deque[str] = deque(maxlen=STUCK_HASH_WINDOW + 1)
+        
+        # Reusable HTTP client for agent calls - created lazily in run()
+        self._http_client: httpx.AsyncClient | None = None
 
         # When resuming, seed _previous_outputs with the last iteration's outputs
         # so the coder receives full prior context on the first new iteration.
@@ -103,7 +104,7 @@ class LoopController:
         else:
             self._previous_outputs = None
 
-    # ── Public API ─────────────────────────────────────────────────────────────
+    # — Public API ———————————————————————————————————————————————————————————————
 
     async def run(self) -> dict[str, Any]:
         """
@@ -126,86 +127,93 @@ class LoopController:
         reason = "unknown"
         loop_n = 0
 
-        for loop_n in range(1, MAX_ITERATIONS + 1):
-            if self._terminated:
-                status = "terminated"
-                reason = self._terminate_reason or "externally terminated"
-                break
-
-            logger.info("=== Iteration %d/%d ===", loop_n, MAX_ITERATIONS)
-            await self._emit_event("orchestrator", "iteration_start", {"loop_n": loop_n})
-
-            try:
-                iteration_result = await asyncio.wait_for(
-                    self._run_iteration(loop_n, self._previous_outputs),
-                    timeout=HANG_TIMEOUT_S,
-                )
-            except asyncio.TimeoutError:
-                reason = f"Iteration {loop_n} hung for {HANG_TIMEOUT_S}s — escalating"
-                logger.error(reason)
-                await push_dead_letter(
-                    self._redis,
-                    self.session_id,
-                    reason=reason,
-                    original_message={"loop_n": loop_n, "session_id": self.session_id},
-                )
-                await self._emit_event("orchestrator", "hang_timeout", {"loop_n": loop_n, "reason": reason})
-                status = "failed"
-                break
-            except Exception as exc:  # noqa: BLE001
-                exc_repr = repr(exc) or type(exc).__name__
-                reason = f"Iteration {loop_n} raised: {exc_repr}"
-                logger.exception(reason)
-                await self._emit_event("orchestrator", "iteration_error", {
-                    "loop_n": loop_n,
-                    "error": exc_repr,
-                    "type": type(exc).__name__,
-                })
-                status = "failed"
-                break
-
-            final_pass_rate = iteration_result.get("qa", {}).get("pass_rate")
-            output_hash = _hash_output(iteration_result)
-            self._output_hashes.append(output_hash)
-
-            self._previous_outputs = iteration_result
-            await write_iteration(self._pool, self.session_id, loop_n, iteration_result, final_pass_rate)
-            await self._emit_event("orchestrator", "iteration_end", {
-                "loop_n": loop_n,
-                "pass_rate": final_pass_rate,
-                "output_hash": output_hash,
-            })
-
-            # ── Evaluate quality gate ──────────────────────────────────────────
-            if final_pass_rate is not None:
-                if final_pass_rate >= PASS_RATE_THRESHOLD:
-                    status = "completed"
-                    reason = f"Pass rate {final_pass_rate:.2%} >= threshold {PASS_RATE_THRESHOLD:.2%}"
-                    logger.info("Loop completed successfully: %s", reason)
+        # Create a single HTTP client for the entire loop lifetime
+        async with httpx.AsyncClient(timeout=WAIT_TIMEOUT_S) as client:
+            self._http_client = client
+            
+            for loop_n in range(1, MAX_ITERATIONS + 1):
+                if self._terminated:
+                    status = "terminated"
+                    reason = self._terminate_reason or "externally terminated"
                     break
 
-                if final_pass_rate < MIN_PASS_RATE_EARLY and loop_n > 5:
-                    logger.warning(
-                        "Pass rate %.2f below early-exit threshold %.2f after iteration %d",
-                        final_pass_rate, MIN_PASS_RATE_EARLY, loop_n,
+                logger.info("=== Iteration %d/%d ===", loop_n, MAX_ITERATIONS)
+                await self._emit_event("orchestrator", "iteration_start", {"loop_n": loop_n})
+
+                try:
+                    iteration_result = await asyncio.wait_for(
+                        self._run_iteration(loop_n, self._previous_outputs),
+                        timeout=HANG_TIMEOUT_S,
                     )
-                    await self._emit_event("orchestrator", "low_pass_rate_alert", {
+                except asyncio.TimeoutError:
+                    reason = f"Iteration {loop_n} hung for {HANG_TIMEOUT_S}s — escalating"
+                    logger.error(reason)
+                    await push_dead_letter(
+                        self._redis,
+                        self.session_id,
+                        reason=reason,
+                        original_message={"loop_n": loop_n, "session_id": self.session_id},
+                    )
+                    await self._emit_event("orchestrator", "hang_timeout", {"loop_n": loop_n, "reason": reason})
+                    status = "failed"
+                    break
+                except Exception as exc:  # noqa: BLE001
+                    exc_repr = repr(exc) or type(exc).__name__
+                    reason = f"Iteration {loop_n} raised: {exc_repr}"
+                    logger.exception(reason)
+                    await self._emit_event("orchestrator", "iteration_error", {
                         "loop_n": loop_n,
-                        "pass_rate": final_pass_rate,
+                        "error": exc_repr,
+                        "type": type(exc).__name__,
                     })
+                    status = "failed"
+                    break
 
-            # ── Stuck detection ───────────────────────────────────────────────
-            if _is_stuck(self._output_hashes):
-                status = "stuck"
-                reason = f"Outputs unchanged for {STUCK_HASH_WINDOW} consecutive iterations"
-                logger.warning("Loop stuck: %s", reason)
-                await self._emit_event("orchestrator", "stuck_detected", {"loop_n": loop_n, "reason": reason})
-                break
+                final_pass_rate = iteration_result.get("qa", {}).get("pass_rate")
+                output_hash = _hash_output(iteration_result)
+                self._output_hashes.append(output_hash)
 
-        else:
-            # Exhausted all iterations without breaking
-            status = "failed"
-            reason = f"Max iterations ({MAX_ITERATIONS}) reached without meeting pass-rate threshold"
+                self._previous_outputs = iteration_result
+                await write_iteration(self._pool, self.session_id, loop_n, iteration_result, final_pass_rate)
+                await self._emit_event("orchestrator", "iteration_end", {
+                    "loop_n": loop_n,
+                    "pass_rate": final_pass_rate,
+                    "output_hash": output_hash,
+                })
+
+                # — Evaluate quality gate ————————————————————————————————————————
+                if final_pass_rate is not None:
+                    if final_pass_rate >= PASS_RATE_THRESHOLD:
+                        status = "completed"
+                        reason = f"Pass rate {final_pass_rate:.2%} >= threshold {PASS_RATE_THRESHOLD:.2%}"
+                        logger.info("Loop completed successfully: %s", reason)
+                        break
+
+                    if final_pass_rate < MIN_PASS_RATE_EARLY and loop_n > 5:
+                        logger.warning(
+                            "Pass rate %.2f below early-exit threshold %.2f after iteration %d",
+                            final_pass_rate, MIN_PASS_RATE_EARLY, loop_n,
+                        )
+                        await self._emit_event("orchestrator", "low_pass_rate_alert", {
+                            "loop_n": loop_n,
+                            "pass_rate": final_pass_rate,
+                        })
+
+                # — Stuck detection ———————————————————————————————————————————————
+                if _is_stuck(self._output_hashes):
+                    status = "stuck"
+                    reason = f"Outputs unchanged for {STUCK_HASH_WINDOW} consecutive iterations"
+                    logger.warning("Loop stuck: %s", reason)
+                    await self._emit_event("orchestrator", "stuck_detected", {"loop_n": loop_n, "reason": reason})
+                    break
+
+            else:
+                # Exhausted all iterations without breaking
+                status = "failed"
+                reason = f"Max iterations ({MAX_ITERATIONS}) reached without meeting pass-rate threshold"
+
+        # Client is now closed via async with
+        self._http_client = None
 
         await update_session_status(self._pool, self.session_id, status)
         await self._emit_event("orchestrator", "loop_end", {
@@ -230,7 +238,7 @@ class LoopController:
         self._terminated = True
         self._terminate_reason = reason
 
-    # ── Private: iteration steps ───────────────────────────────────────────────
+    # — Private: iteration steps ———————————————————————————————————————————————
 
     async def _run_iteration(
         self, loop_n: int, previous_outputs: dict[str, Any] | None = None
@@ -297,16 +305,19 @@ class LoopController:
         payload: dict[str, Any],
     ) -> dict[str, Any]:
         """
-        POST to an agent /run endpoint with a per-call timeout.
+        POST to an agent /run endpoint using the reusable HTTP client.
         The HANG_TIMEOUT_S outer guard covers the full iteration;
-        WAIT_TIMEOUT_S is the per-agent call limit.
+        WAIT_TIMEOUT_S is the per-agent call limit (set on the client).
         """
         await self._emit_event("orchestrator", f"{agent}_assigned", {"loop_n": payload.get("loop_n")})
+        
+        if self._http_client is None:
+            raise RuntimeError("HTTP client not initialized - run() must be called first")
+        
         try:
-            async with httpx.AsyncClient(timeout=WAIT_TIMEOUT_S) as client:
-                resp = await client.post(url, json=payload)
-                resp.raise_for_status()
-                result = resp.json()
+            resp = await self._http_client.post(url, json=payload)
+            resp.raise_for_status()
+            result = resp.json()
         except httpx.TimeoutException as exc:
             reason = f"{agent} did not respond within {WAIT_TIMEOUT_S}s"
             await push_dead_letter(
@@ -348,7 +359,7 @@ class LoopController:
         await self._emit_event("orchestrator", f"{agent}_result_received", chat_payload)
         return result
 
-    # ── Private: file materialization ──────────────────────────────────────────
+    # — Private: file materialization ————————————————————————————————————————————
 
     async def _materialize_files(self, loop_n: int, iteration_result: dict[str, Any]) -> None:
         """Write coder-produced files to the artifact volume on the host."""
@@ -371,7 +382,7 @@ class LoopController:
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_text(content, encoding="utf-8")
 
-    # ── Private: event helpers ─────────────────────────────────────────────────
+    # — Private: event helpers ———————————————————————————————————————————————————
 
     async def _emit_event(
         self,

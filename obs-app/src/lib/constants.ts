@@ -61,16 +61,47 @@ export const STATUS_COLORS: Record<string, string> = {
 export const AGENT_SEQUENCE = ['coder', 'reviewer', 'qa'] as const;
 export type AgentRole = typeof AGENT_SEQUENCE[number] | 'orchestrator';
 
-/** Base URL for the orchestrator — read from env at runtime */
-export function getOrchestratorUrl(): string {
-  return (
-    process.env.NEXT_PUBLIC_ORCHESTRATOR_URL ?? 'http://localhost:8000'
-  );
+/**
+ * Read process.env without the global `process` identifier (not in DOM lib; avoids requiring @types/node).
+ */
+function readEnv(key: string): string | undefined {
+  if (typeof globalThis === 'undefined') return undefined;
+  const g = globalThis as typeof globalThis & {
+    process?: { env?: Record<string, string | undefined> };
+  };
+  return g.process?.env?.[key];
 }
 
-/** Base WebSocket URL for real-time event streaming */
+/**
+ * Get orchestrator URL.
+ * 
+ * Note: In browser context (client components), only NEXT_PUBLIC_* env vars
+ * are available. This function returns the default if the env var is not set.
+ * For server components, all env vars are available.
+ */
+export function getOrchestratorUrl(): string {
+  // Check if we're in browser context
+  if (typeof window !== 'undefined') {
+    // Client-side: only NEXT_PUBLIC_* vars are available at build time
+    // They must be inlined by Next.js at build, not read from process.env at runtime
+    return readEnv('NEXT_PUBLIC_ORCHESTRATOR_URL') ?? 'http://localhost:8000';
+  }
+  // Server-side: all env vars available
+  return readEnv('ORCHESTRATOR_INTERNAL_URL') ??
+         readEnv('NEXT_PUBLIC_ORCHESTRATOR_URL') ??
+         'http://localhost:8000';
+}
+
+/**
+ * Get WebSocket URL for real-time event streaming.
+ * 
+ * Same browser/server context rules apply as getOrchestratorUrl().
+ */
 export function getWsUrl(): string {
-  return (
-    process.env.NEXT_PUBLIC_WS_URL ?? 'ws://localhost:8000'
-  );
+  if (typeof window !== 'undefined') {
+    return readEnv('NEXT_PUBLIC_WS_URL') ?? 'ws://localhost:8000';
+  }
+  return readEnv('WS_INTERNAL_URL') ??
+         readEnv('NEXT_PUBLIC_WS_URL') ??
+         'ws://localhost:8000';
 }

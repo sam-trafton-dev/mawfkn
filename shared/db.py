@@ -19,11 +19,24 @@ logger = logging.getLogger(__name__)
 _pool: asyncpg.Pool | None = None
 
 
+def _asyncpg_dsn(url: str) -> str:
+    """
+    asyncpg accepts only postgresql:// or postgres://.
+    Strip SQLAlchemy's +asyncpg driver suffix if present (legacy env or docs).
+    """
+    if url.startswith("postgresql+asyncpg://"):
+        return "postgresql://" + url.removeprefix("postgresql+asyncpg://")
+    if url.startswith("postgres+asyncpg://"):
+        return "postgres://" + url.removeprefix("postgres+asyncpg://")
+    return url
+
+
 async def get_pool() -> asyncpg.Pool:
     """Get or create the asyncpg connection pool."""
     global _pool
     if _pool is None:
-        dsn = os.getenv("DATABASE_URL", "postgresql://mawf:mawf@postgres:5432/mawf")
+        raw = os.getenv("DATABASE_URL", "postgresql://mawf:mawf@postgres:5432/mawf")
+        dsn = _asyncpg_dsn(raw)
         _pool = await asyncpg.create_pool(dsn, min_size=2, max_size=10)
         logger.info("Created asyncpg connection pool")
     return _pool

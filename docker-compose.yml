@@ -55,7 +55,7 @@ services:
       SME_DOMAIN: data
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-mawf}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-mawf}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-mawf}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-mawf}
     networks:
       - mawf-net
     restart: unless-stopped
@@ -83,7 +83,7 @@ services:
       SME_DOMAIN: api
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-mawf}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-mawf}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-mawf}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-mawf}
     networks:
       - mawf-net
     restart: unless-stopped
@@ -111,7 +111,7 @@ services:
       SME_DOMAIN: ux
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-mawf}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-mawf}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-mawf}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-mawf}
     networks:
       - mawf-net
     restart: unless-stopped
@@ -139,7 +139,7 @@ services:
       SME_DOMAIN: business
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-mawf}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-mawf}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-mawf}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-mawf}
     networks:
       - mawf-net
     restart: unless-stopped
@@ -167,7 +167,7 @@ services:
       SME_DOMAIN: networking
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-mawf}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-mawf}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-mawf}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-mawf}
     networks:
       - mawf-net
     restart: unless-stopped
@@ -195,7 +195,7 @@ services:
       SME_DOMAIN: devops
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-mawf}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-mawf}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-mawf}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-mawf}
     networks:
       - mawf-net
     restart: unless-stopped
@@ -226,7 +226,7 @@ services:
     environment:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-mawf}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-mawf}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-mawf}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-mawf}
       ARTIFACT_PATH: /artifacts
       INPUT_PATH: /input
     volumes:
@@ -249,7 +249,8 @@ services:
       test: ["CMD-SHELL", "curl -f http://localhost:8001/health || exit 1"]
       interval: 15s
       timeout: 5s
-      retries: 3
+      retries: 5
+      start_period: 40s
 
   reviewer:
     build:
@@ -260,7 +261,7 @@ services:
     environment:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-mawf}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-mawf}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-mawf}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-mawf}
       ARTIFACT_PATH: /artifacts
       INPUT_PATH: /input
     volumes:
@@ -283,7 +284,8 @@ services:
       test: ["CMD-SHELL", "curl -f http://localhost:8002/health || exit 1"]
       interval: 15s
       timeout: 5s
-      retries: 3
+      retries: 5
+      start_period: 40s
 
   qa:
     build:
@@ -294,7 +296,7 @@ services:
     environment:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-mawf}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-mawf}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-mawf}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-mawf}
       ARTIFACT_PATH: /artifacts
       INPUT_PATH: /input
     volumes:
@@ -317,7 +319,8 @@ services:
       test: ["CMD-SHELL", "curl -f http://localhost:8003/health || exit 1"]
       interval: 15s
       timeout: 5s
-      retries: 3
+      retries: 5
+      start_period: 40s
 
   orchestrator:
     build:
@@ -328,7 +331,7 @@ services:
     environment:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-mawf}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-mawf}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-mawf}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-mawf}
       ARTIFACT_PATH: /artifacts
       INPUT_PATH: /input
       CODER_URL: http://coder:8001

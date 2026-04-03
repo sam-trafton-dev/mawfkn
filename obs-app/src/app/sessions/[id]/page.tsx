@@ -158,9 +158,10 @@ function IterationsTable({ iterations }: { iterations: Iteration[] }) {
 export default async function SessionDetailPage({
   params,
 }: {
-  params: { id: string };
+  params: Promise<{ id: string }>;
 }) {
-  const session = await fetchSession(params.id);
+  const { id } = await params;
+  const session = await fetchSession(id);
   if (!session) notFound();
 
   const duration = session.updated_at

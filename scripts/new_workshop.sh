@@ -15,6 +15,12 @@
 #
 # The generated file is written to:
 #   docker-compose.workshop-<name>.yml
+# (<name> is normalized to lowercase — Docker image refs must be lowercase.)
+#
+# NOTE: Services that publish host ports (orchestrator, coder, reviewer, qa,
+# obs-app) are inlined below instead of using `extends`. Docker Compose merges
+# `ports` from `extends` with the parent service, so child port overrides were
+# ignored and workshop B re-bound 8000/3000 (same as workshop A).
 
 set -euo pipefail
 
@@ -27,6 +33,13 @@ fi
 
 NAME="$1"
 OFFSET="$2"
+
+# Compose builds image names from project + service names; OCI requires lowercase.
+NAME_LOWER=$(printf '%s' "$NAME" | tr '[:upper:]' '[:lower:]')
+if [[ "$NAME" != "$NAME_LOWER" ]]; then
+  echo "Note: normalizing workshop name '$NAME' -> '$NAME_LOWER' (Docker requires lowercase image names)." >&2
+fi
+NAME="$NAME_LOWER"
 
 # Validate offset is a non-negative integer
 if ! [[ "$OFFSET" =~ ^[0-9]+$ ]]; then
@@ -104,15 +117,126 @@ services:
       - mawf-net-${NAME}
     # No ports: binding
 
+  # ── Inlined (no extends): port-publishing services ─────────────────────────
+  # See NOTE at top of scripts/new_workshop.sh — extends + ports merge bug.
+
+  coder-${NAME}:
+    build:
+      context: .
+      dockerfile: services/coder/Dockerfile
+    ports:
+      - "${PORT_CODER}:8001"
+    environment:
+      ANTHROPIC_API_KEY: \${ANTHROPIC_API_KEY}
+      REDIS_URL: redis://:\${REDIS_PASSWORD}@redis-${NAME}:6379/0
+      DATABASE_URL: postgresql://\${POSTGRES_USER:-mawf}:\${POSTGRES_PASSWORD}@postgres-${NAME}:5432/\${POSTGRES_DB:-mawf}
+      ARTIFACT_PATH: /artifacts
+      INPUT_PATH: /input
+    volumes:
+      - artifacts-${NAME}:/artifacts
+      - ./input:/input:ro
+    networks:
+      - mawf-net-${NAME}
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+    depends_on:
+      postgres-${NAME}:
+        condition: service_healthy
+      redis-${NAME}:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8001/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+
+  reviewer-${NAME}:
+    build:
+      context: .
+      dockerfile: services/reviewer/Dockerfile
+    ports:
+      - "${PORT_REVIEWER}:8002"
+    environment:
+      ANTHROPIC_API_KEY: \${ANTHROPIC_API_KEY}
+      REDIS_URL: redis://:\${REDIS_PASSWORD}@redis-${NAME}:6379/0
+      DATABASE_URL: postgresql://\${POSTGRES_USER:-mawf}:\${POSTGRES_PASSWORD}@postgres-${NAME}:5432/\${POSTGRES_DB:-mawf}
+      ARTIFACT_PATH: /artifacts
+      INPUT_PATH: /input
+    volumes:
+      - artifacts-${NAME}:/artifacts
+      - ./input:/input:ro
+    networks:
+      - mawf-net-${NAME}
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+    depends_on:
+      postgres-${NAME}:
+        condition: service_healthy
+      redis-${NAME}:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8002/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+
+  qa-${NAME}:
+    build:
+      context: .
+      dockerfile: services/qa/Dockerfile
+    ports:
+      - "${PORT_QA}:8003"
+    environment:
+      ANTHROPIC_API_KEY: \${ANTHROPIC_API_KEY}
+      REDIS_URL: redis://:\${REDIS_PASSWORD}@redis-${NAME}:6379/0
+      DATABASE_URL: postgresql://\${POSTGRES_USER:-mawf}:\${POSTGRES_PASSWORD}@postgres-${NAME}:5432/\${POSTGRES_DB:-mawf}
+      ARTIFACT_PATH: /artifacts
+      INPUT_PATH: /input
+    volumes:
+      - artifacts-${NAME}:/artifacts
+      - ./input:/input:ro
+    networks:
+      - mawf-net-${NAME}
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+    depends_on:
+      postgres-${NAME}:
+        condition: service_healthy
+      redis-${NAME}:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8003/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+
   orchestrator-${NAME}:
-    extends:
-      file: docker-compose.yml
-      service: orchestrator
+    build:
+      context: .
+      dockerfile: services/orchestrator/Dockerfile
     ports:
       - "${PORT_ORCHESTRATOR}:8000"
     environment:
-      DATABASE_URL: postgresql+asyncpg://\${POSTGRES_USER:-mawf}:\${POSTGRES_PASSWORD}@postgres-${NAME}:5432/\${POSTGRES_DB:-mawf}
+      ANTHROPIC_API_KEY: \${ANTHROPIC_API_KEY}
       REDIS_URL: redis://:\${REDIS_PASSWORD}@redis-${NAME}:6379/0
+      DATABASE_URL: postgresql://\${POSTGRES_USER:-mawf}:\${POSTGRES_PASSWORD}@postgres-${NAME}:5432/\${POSTGRES_DB:-mawf}
+      ARTIFACT_PATH: /artifacts
+      INPUT_PATH: /input
       CODER_URL: http://coder-${NAME}:8001
       REVIEWER_URL: http://reviewer-${NAME}:8002
       QA_URL: http://qa-${NAME}:8003
@@ -124,8 +248,15 @@ services:
       SME_DEVOPS_URL: http://sme-devops-${NAME}:8080
     volumes:
       - artifacts-${NAME}:/artifacts
+      - ./input:/input:ro
     networks:
       - mawf-net-${NAME}
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
     depends_on:
       postgres-${NAME}:
         condition: service_healthy
@@ -137,70 +268,19 @@ services:
         condition: service_healthy
       qa-${NAME}:
         condition: service_healthy
-
-  coder-${NAME}:
-    extends:
-      file: docker-compose.yml
-      service: coder
-    ports:
-      - "${PORT_CODER}:8001"
-    environment:
-      DATABASE_URL: postgresql+asyncpg://\${POSTGRES_USER:-mawf}:\${POSTGRES_PASSWORD}@postgres-${NAME}:5432/\${POSTGRES_DB:-mawf}
-      REDIS_URL: redis://:\${REDIS_PASSWORD}@redis-${NAME}:6379/0
-    volumes:
-      - artifacts-${NAME}:/artifacts
-    networks:
-      - mawf-net-${NAME}
-    depends_on:
-      postgres-${NAME}:
-        condition: service_healthy
-      redis-${NAME}:
-        condition: service_healthy
-
-  reviewer-${NAME}:
-    extends:
-      file: docker-compose.yml
-      service: reviewer
-    ports:
-      - "${PORT_REVIEWER}:8002"
-    environment:
-      DATABASE_URL: postgresql+asyncpg://\${POSTGRES_USER:-mawf}:\${POSTGRES_PASSWORD}@postgres-${NAME}:5432/\${POSTGRES_DB:-mawf}
-      REDIS_URL: redis://:\${REDIS_PASSWORD}@redis-${NAME}:6379/0
-    volumes:
-      - artifacts-${NAME}:/artifacts
-    networks:
-      - mawf-net-${NAME}
-    depends_on:
-      postgres-${NAME}:
-        condition: service_healthy
-      redis-${NAME}:
-        condition: service_healthy
-
-  qa-${NAME}:
-    extends:
-      file: docker-compose.yml
-      service: qa
-    ports:
-      - "${PORT_QA}:8003"
-    environment:
-      DATABASE_URL: postgresql+asyncpg://\${POSTGRES_USER:-mawf}:\${POSTGRES_PASSWORD}@postgres-${NAME}:5432/\${POSTGRES_DB:-mawf}
-      REDIS_URL: redis://:\${REDIS_PASSWORD}@redis-${NAME}:6379/0
-    volumes:
-      - artifacts-${NAME}:/artifacts
-    networks:
-      - mawf-net-${NAME}
-    depends_on:
-      postgres-${NAME}:
-        condition: service_healthy
-      redis-${NAME}:
-        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
 
   sme-data-${NAME}:
     extends:
       file: docker-compose.yml
       service: sme-data
     environment:
-      DATABASE_URL: postgresql+asyncpg://\${POSTGRES_USER:-mawf}:\${POSTGRES_PASSWORD}@postgres-${NAME}:5432/\${POSTGRES_DB:-mawf}
+      DATABASE_URL: postgresql://\${POSTGRES_USER:-mawf}:\${POSTGRES_PASSWORD}@postgres-${NAME}:5432/\${POSTGRES_DB:-mawf}
       REDIS_URL: redis://:\${REDIS_PASSWORD}@redis-${NAME}:6379/0
     networks:
       - mawf-net-${NAME}
@@ -215,7 +295,7 @@ services:
       file: docker-compose.yml
       service: sme-api
     environment:
-      DATABASE_URL: postgresql+asyncpg://\${POSTGRES_USER:-mawf}:\${POSTGRES_PASSWORD}@postgres-${NAME}:5432/\${POSTGRES_DB:-mawf}
+      DATABASE_URL: postgresql://\${POSTGRES_USER:-mawf}:\${POSTGRES_PASSWORD}@postgres-${NAME}:5432/\${POSTGRES_DB:-mawf}
       REDIS_URL: redis://:\${REDIS_PASSWORD}@redis-${NAME}:6379/0
     networks:
       - mawf-net-${NAME}
@@ -230,7 +310,7 @@ services:
       file: docker-compose.yml
       service: sme-ux
     environment:
-      DATABASE_URL: postgresql+asyncpg://\${POSTGRES_USER:-mawf}:\${POSTGRES_PASSWORD}@postgres-${NAME}:5432/\${POSTGRES_DB:-mawf}
+      DATABASE_URL: postgresql://\${POSTGRES_USER:-mawf}:\${POSTGRES_PASSWORD}@postgres-${NAME}:5432/\${POSTGRES_DB:-mawf}
       REDIS_URL: redis://:\${REDIS_PASSWORD}@redis-${NAME}:6379/0
     networks:
       - mawf-net-${NAME}
@@ -245,7 +325,7 @@ services:
       file: docker-compose.yml
       service: sme-business
     environment:
-      DATABASE_URL: postgresql+asyncpg://\${POSTGRES_USER:-mawf}:\${POSTGRES_PASSWORD}@postgres-${NAME}:5432/\${POSTGRES_DB:-mawf}
+      DATABASE_URL: postgresql://\${POSTGRES_USER:-mawf}:\${POSTGRES_PASSWORD}@postgres-${NAME}:5432/\${POSTGRES_DB:-mawf}
       REDIS_URL: redis://:\${REDIS_PASSWORD}@redis-${NAME}:6379/0
     networks:
       - mawf-net-${NAME}
@@ -260,7 +340,7 @@ services:
       file: docker-compose.yml
       service: sme-networking
     environment:
-      DATABASE_URL: postgresql+asyncpg://\${POSTGRES_USER:-mawf}:\${POSTGRES_PASSWORD}@postgres-${NAME}:5432/\${POSTGRES_DB:-mawf}
+      DATABASE_URL: postgresql://\${POSTGRES_USER:-mawf}:\${POSTGRES_PASSWORD}@postgres-${NAME}:5432/\${POSTGRES_DB:-mawf}
       REDIS_URL: redis://:\${REDIS_PASSWORD}@redis-${NAME}:6379/0
     networks:
       - mawf-net-${NAME}
@@ -275,7 +355,7 @@ services:
       file: docker-compose.yml
       service: sme-devops
     environment:
-      DATABASE_URL: postgresql+asyncpg://\${POSTGRES_USER:-mawf}:\${POSTGRES_PASSWORD}@postgres-${NAME}:5432/\${POSTGRES_DB:-mawf}
+      DATABASE_URL: postgresql://\${POSTGRES_USER:-mawf}:\${POSTGRES_PASSWORD}@postgres-${NAME}:5432/\${POSTGRES_DB:-mawf}
       REDIS_URL: redis://:\${REDIS_PASSWORD}@redis-${NAME}:6379/0
     networks:
       - mawf-net-${NAME}
@@ -286,18 +366,25 @@ services:
         condition: service_healthy
 
   obs-app-${NAME}:
-    extends:
-      file: docker-compose.yml
-      service: obs-app
+    build:
+      context: ./obs-app
+      dockerfile: Dockerfile
     ports:
       - "${PORT_OBS}:3000"
     environment:
       NEXT_PUBLIC_ORCHESTRATOR_URL: http://localhost:${PORT_ORCHESTRATOR}
       NEXT_PUBLIC_WS_URL: ws://localhost:${PORT_ORCHESTRATOR}
+      ORCHESTRATOR_INTERNAL_URL: http://orchestrator-${NAME}:8000
     networks:
       - mawf-net-${NAME}
+    restart: unless-stopped
     depends_on:
       - orchestrator-${NAME}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 EOF
 
 chmod +x "$OUTPUT_FILE" 2>/dev/null || true

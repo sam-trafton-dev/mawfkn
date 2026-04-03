@@ -68,7 +68,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     _load_domain(SME_DOMAIN)
 
     # Initialise shared infrastructure
-    pool = await get_pool(min_size=1, max_size=4)
+    pool = await get_pool()
     get_client()
 
     # Seed default prompt so it's visible in the obs-app prompt editor

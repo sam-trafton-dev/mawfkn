@@ -77,7 +77,7 @@ class BaseSME:
             return self.system_prompt
         try:
             row = await pool.fetchrow(
-                "SELECT content FROM system_prompts WHERE agent_role = $1",
+                "SELECT content FROM agent_prompts WHERE agent_role = $1",
                 f"sme-{self.domain}",
             )
             return row["content"] if row else self.system_prompt

@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Multi-Agent Workflow Diagram</title>
+<style>
+  body { margin: 0; padding: 24px; background: #fff; font-family: sans-serif; }
+  svg { width: 100%; max-width: 900px; display: block; margin: 0 auto; }
+</style>
+</head>
+<body>
+<svg viewBox="0 0 720 1180" xmlns="http://www.w3.org/2000/svg">
+<defs>
+  <style>
+    .t  { font: 400 14px sans-serif; fill: #1a1a1a; }
+    .ts { font: 400 12px sans-serif; fill: #555; }
+    .th { font: 500 14px sans-serif; fill: #1a1a1a; }
+    .tf { font: 400 10px sans-serif; fill: #888; }
+    .arr { stroke: #888; stroke-width: 1; fill: none; }
+    .node { cursor: pointer; }
+    .node:hover rect, .node:hover circle { opacity: 0.85; }
+
+    .c-gray > rect  { fill: #F1EFE8; stroke: #5F5E5A; stroke-width: 0.5; }
+    .c-gray > .th, .c-gray > .t { fill: #444441; }
+    .c-gray > .ts { fill: #5F5E5A; }
+
+    .c-purple > rect { fill: #EEEDFE; stroke: #534AB7; stroke-width: 0.5; }
+    .c-purple > .th { fill: #3C3489; }
+    .c-purple > .ts { fill: #534AB7; }
+    .c-purple > .tf { fill: #7B73CC; }
+
+    .c-teal > rect { fill: #E1F5EE; stroke: #0F6E56; stroke-width: 0.5; }
+    .c-teal > .th { fill: #085041; }
+    .c-teal > .ts { fill: #0F6E56; }
+
+    .c-coral > rect { fill: #FAECE7; stroke: #993C1D; stroke-width: 0.5; }
+    .c-coral > .th { fill: #712B13; }
+    .c-coral > .ts { fill: #993C1D; }
+
+    .c-amber > rect { fill: #FAEEDA; stroke: #854F0B; stroke-width: 0.5; }
+    .c-amber > .th { fill: #633806; }
+    .c-amber > .ts { fill: #854F0B; }
+
+    .c-blue > rect { fill: #E6F1FB; stroke: #185FA5; stroke-width: 0.5; }
+    .c-blue > .th { fill: #0C447C; }
+    .c-blue > .ts { fill: #185FA5; }
+
+    .c-green > rect { fill: #EAF3DE; stroke: #3B6D11; stroke-width: 0.5; }
+    .c-green > .th { fill: #27500A; }
+    .c-green > .ts { fill: #3B6D11; }
+
+    .c-red > rect { fill: #FDE8E8; stroke: #B91C1C; stroke-width: 0.5; }
+    .c-red > .th { fill: #7F1D1D; }
+    .c-red > .ts { fill: #B91C1C; }
+  </style>
+  <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M2 1L8 5L2 9" fill="none" stroke="#888" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+  <marker id="arrow-red" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M2 1L8 5L2 9" fill="none" stroke="#B91C1C" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+</defs>
+
+<!-- USER -->
+<g class="node c-gray">
+  <rect x="285" y="20" width="150" height="44" rx="8"/>
+  <text class="th" x="360" y="42" text-anchor="middle" dominant-baseline="central">User</text>
+</g>
+
+<!-- Arrow: User <-> Orchestrator -->
+<line x1="360" y1="64" x2="360" y2="108" stroke="#888" stroke-width="1" marker-end="url(#arrow)" opacity="0.5"/>
+<line x1="350" y1="108" x2="350" y2="64" stroke="#888" stroke-width="1" marker-end="url(#arrow)" opacity="0.5"/>
+
+<!-- ORCHESTRATOR — fix #1: correct model string shown; fix #5: self-detects stuck + escalates -->
+<g class="node c-purple">
+  <rect x="195" y="108" width="330" height="70" rx="8"/>
+  <text class="th" x="360" y="128" text-anchor="middle" dominant-baseline="central">Orchestrator</text>
+  <text class="ts" x="360" y="148" text-anchor="middle" dominant-baseline="central">Task routing · exit evaluation · stuck-loop detection</text>
+  <text class="tf" x="360" y="166" text-anchor="middle" dominant-baseline="central">Escalates to user on hang · model: claude-opus-4-5</text>
+</g>
+
+<!-- RATE-LIMIT / RETRY LAYER — fix #8 -->
+<g class="node c-red">
+  <rect x="490" y="120" width="180" height="46" rx="8"/>
+  <text class="th" x="580" y="136" text-anchor="middle" dominant-baseline="central">API Gateway</text>
+  <text class="ts" x="580" y="154" text-anchor="middle" dominant-baseline="central">Exp. backoff · retry · RPM cap</text>
+</g>
+<line x1="525" y1="143" x2="495" y2="143" stroke="#B91C1C" stroke-width="1" marker-end="url(#arrow-red)" opacity="0.5"/>
+
+<!-- CORE LOOP CONTAINER — fix #9: loop is sequential, not bidirectional -->
+<rect x="50" y="220" width="620" height="270" rx="12" fill="none" stroke="#888" stroke-width="0.5" stroke-dasharray="6 4" opacity="0.4"/>
+<text class="ts" x="70" y="236" fill="#888" opacity="0.6">Core agent loop — sequential: Coder → Reviewer → QA → Orchestrator evaluates</text>
+
+<!-- Arrows: Orchestrator to core agents (sequential, one-way assignment) -->
+<line x1="300" y1="178" x2="200" y2="228" stroke="#888" stroke-width="1" marker-end="url(#arrow)" opacity="0.4"/>
+<line x1="360" y1="178" x2="360" y2="228" stroke="#888" stroke-width="1" marker-end="url(#arrow)" opacity="0.4"/>
+<line x1="420" y1="178" x2="530" y2="228" stroke="#888" stroke-width="1" marker-end="url(#arrow)" opacity="0.4"/>
+
+<!-- Result arrows back to orchestrator (orchestrator evaluates all outputs) -->
+<line x1="200" y1="228" x2="290" y2="180" stroke="#888" stroke-width="1" marker-end="url(#arrow)" opacity="0.25" stroke-dasharray="3 2"/>
+<line x1="370" y1="228" x2="370" y2="180" stroke="#888" stroke-width="1" marker-end="url(#arrow)" opacity="0.25" stroke-dasharray="3 2"/>
+<line x1="520" y1="228" x2="430" y2="180" stroke="#888" stroke-width="1" marker-end="url(#arrow)" opacity="0.25" stroke-dasharray="3 2"/>
+
+<!-- CODING AGENT — fix #2: resource limits noted; fix #8: API calls via gateway -->
+<g class="node c-teal">
+  <rect x="62" y="240" width="170" height="68" rx="8"/>
+  <text class="th" x="147" y="260" text-anchor="middle" dominant-baseline="central">Coding agent</text>
+  <text class="ts" x="147" y="278" text-anchor="middle" dominant-baseline="central">Implements features</text>
+  <text class="tf" x="147" y="296" text-anchor="middle" dominant-baseline="central">deploy.resources.limits set</text>
+</g>
+
+<!-- CODE REVIEWER — fix #7: receives code via Redis payload with size guard -->
+<g class="node c-coral">
+  <rect x="275" y="240" width="170" height="68" rx="8"/>
+  <text class="th" x="360" y="260" text-anchor="middle" dominant-baseline="central">Code reviewer</text>
+  <text class="ts" x="360" y="278" text-anchor="middle" dominant-baseline="central">Adversarial critique</text>
+  <text class="tf" x="360" y="296" text-anchor="middle" dominant-baseline="central">Code via Redis (size-guarded)</text>
+</g>
+
+<!-- QA/QC AGENT -->
+<g class="node c-amber">
+  <rect x="488" y="240" width="170" height="68" rx="8"/>
+  <text class="th" x="573" y="260" text-anchor="middle" dominant-baseline="central">QA/QC agent</text>
+  <text class="ts" x="573" y="278" text-anchor="middle" dominant-baseline="central">Builds test bench</text>
+  <text class="tf" x="573" y="296" text-anchor="middle" dominant-baseline="central">deploy.resources.limits set</text>
+</g>
+
+<!-- Sequential flow arrows: Coder → Reviewer → QA (fix #9) -->
+<line x1="232" y1="290" x2="275" y2="290" stroke="#1D9E75" stroke-width="1.5" marker-end="url(#arrow)" opacity="0.7"/>
+<line x1="445" y1="274" x2="488" y2="274" stroke="#BA7517" stroke-width="1.5" marker-end="url(#arrow)" opacity="0.7"/>
+<line x1="488" y1="294" x2="445" y2="294" stroke="#BA7517" stroke-width="1.5" marker-end="url(#arrow)" opacity="0.5"/>
+
+<!-- Redis pub/sub label -->
+<text class="tf" x="253" y="283" text-anchor="middle" fill="#1D9E75" opacity="0.8">Redis</text>
+<text class="tf" x="467" y="268" text-anchor="middle" fill="#BA7517" opacity="0.8">Redis</text>
+
+<!-- Loop return + stuck detection (fix #5) -->
+<path d="M573 308 Q573 420 360 420 Q147 420 147 308" fill="none" stroke="#888" stroke-width="1" stroke-dasharray="5 3" opacity="0.35" marker-end="url(#arrow)"/>
+<text class="ts" x="360" y="438" text-anchor="middle" opacity="0.5">iterates until exit criteria met · orchestrator self-detects hang (10 min timeout)</text>
+
+<!-- REDIS BUS — fix #4: dead-letter queue + timeout noted -->
+<g class="node c-red">
+  <rect x="245" y="460" width="230" height="46" rx="8"/>
+  <text class="th" x="360" y="476" text-anchor="middle" dominant-baseline="central">Redis message bus</text>
+  <text class="ts" x="360" y="494" text-anchor="middle" dominant-baseline="central">Pub/sub · dead-letter queue · 30s timeout</text>
+</g>
+<line x1="147" y1="308" x2="280" y2="462" stroke="#888" stroke-width="0.5" stroke-dasharray="3 2" opacity="0.25" marker-end="url(#arrow)"/>
+<line x1="360" y1="308" x2="360" y2="460" stroke="#888" stroke-width="0.5" stroke-dasharray="3 2" opacity="0.25" marker-end="url(#arrow)"/>
+<line x1="573" y1="308" x2="440" y2="462" stroke="#888" stroke-width="0.5" stroke-dasharray="3 2" opacity="0.25" marker-end="url(#arrow)"/>
+
+<!-- SME ZONE CONTAINER -->
+<rect x="30" y="540" width="660" height="300" rx="12" fill="none" stroke="#888" stroke-width="0.5" stroke-dasharray="6 4" opacity="0.3"/>
+<text class="ts" x="50" y="556" fill="#888" opacity="0.5">SME knowledge agents — stateless · responses cached in sme_cache · httpx connection pool</text>
+
+<!-- SME access arrows -->
+<line x1="147" y1="308" x2="147" y2="546" stroke="#888" stroke-width="0.5" stroke-dasharray="4 3" opacity="0.25" marker-end="url(#arrow)"/>
+<line x1="360" y1="308" x2="360" y2="546" stroke="#888" stroke-width="0.5" stroke-dasharray="4 3" opacity="0.25" marker-end="url(#arrow)"/>
+<line x1="573" y1="308" x2="573" y2="546" stroke="#888" stroke-width="0.5" stroke-dasharray="4 3" opacity="0.25" marker-end="url(#arrow)"/>
+
+<!-- SME ROW 1 -->
+<g class="node c-blue"><rect x="44" y="566" width="140" height="52" rx="8"/><text class="th" x="114" y="582" text-anchor="middle" dominant-baseline="central">Data SME</text><text class="ts" x="114" y="600" text-anchor="middle" dominant-baseline="central">Schema, pipelines</text><text class="tf" x="114" y="612" text-anchor="middle">prompt v-hashed</text></g>
+<g class="node c-blue"><rect x="200" y="566" width="140" height="52" rx="8"/><text class="th" x="270" y="582" text-anchor="middle" dominant-baseline="central">API SME</text><text class="ts" x="270" y="600" text-anchor="middle" dominant-baseline="central">Contracts, endpoints</text><text class="tf" x="270" y="612" text-anchor="middle">prompt v-hashed</text></g>
+<g class="node c-blue"><rect x="356" y="566" width="140" height="52" rx="8"/><text class="th" x="426" y="582" text-anchor="middle" dominant-baseline="central">UX/UI SME</text><text class="ts" x="426" y="600" text-anchor="middle" dominant-baseline="central">Patterns, standards</text><text class="tf" x="426" y="612" text-anchor="middle">prompt v-hashed</text></g>
+<g class="node c-blue"><rect x="512" y="566" width="140" height="52" rx="8"/><text class="th" x="582" y="582" text-anchor="middle" dominant-baseline="central">Business SME</text><text class="ts" x="582" y="600" text-anchor="middle" dominant-baseline="central">Domain rules</text><text class="tf" x="582" y="612" text-anchor="middle">prompt v-hashed</text></g>
+
+<!-- SME ROW 2 -->
+<g class="node c-blue"><rect x="100" y="634" width="140" height="52" rx="8"/><text class="th" x="170" y="650" text-anchor="middle" dominant-baseline="central">Networking SME</text><text class="ts" x="170" y="668" text-anchor="middle" dominant-baseline="central">Protocols, infra</text><text class="tf" x="170" y="680" text-anchor="middle">prompt v-hashed</text></g>
+<g class="node c-blue"><rect x="270" y="634" width="140" height="52" rx="8"/><text class="th" x="340" y="650" text-anchor="middle" dominant-baseline="central">DevOps SME</text><text class="ts" x="340" y="668" text-anchor="middle" dominant-baseline="central">CI/CD, deployment</text><text class="tf" x="340" y="680" text-anchor="middle">prompt v-hashed</text></g>
+<g class="node c-blue"><rect x="440" y="634" width="140" height="52" rx="8"/><text class="th" x="510" y="650" text-anchor="middle" dominant-baseline="central">+ Domain SME</text><text class="ts" x="510" y="668" text-anchor="middle" dominant-baseline="central">Extensible slot</text><text class="tf" x="510" y="680" text-anchor="middle">prompt v-hashed</text></g>
+
+<!-- SME cache note -->
+<text class="tf" x="360" y="706" text-anchor="middle" fill="#888">Cache key: sha256(prompt_version + session_id + domain + question) · TTL: 24 h</text>
+
+<!-- HEALTH CHECK LAYER — fix #5 (agent health) -->
+<g class="node c-red">
+  <rect x="44" y="855" width="632" height="44" rx="8"/>
+  <text class="th" x="360" y="871" text-anchor="middle" dominant-baseline="central">Agent health checks</text>
+  <text class="ts" x="360" y="889" text-anchor="middle" dominant-baseline="central">All agents expose /health · orchestrator polls every 15 s · dead agent triggers escalation</text>
+</g>
+
+<!-- CONTEXT STORE -->
+<g class="node c-gray">
+  <rect x="44" y="915" width="632" height="56" rx="8"/>
+  <text class="th" x="360" y="935" text-anchor="middle" dominant-baseline="central">Context store (PostgreSQL + JSONB)</text>
+  <text class="ts" x="360" y="955" text-anchor="middle" dominant-baseline="central">Persists agent identity, task state, session history · sme_cache with TTL · no vector store in core</text>
+</g>
+
+<!-- Arrows to context store -->
+<line x1="360" y1="899" x2="360" y2="915" stroke="#888" stroke-width="1" marker-end="url(#arrow)" opacity="0.4"/>
+<line x1="200" y1="178" x2="100" y2="921" stroke="#888" stroke-width="0.5" stroke-dasharray="4 3" opacity="0.2" marker-end="url(#arrow)"/>
+<line x1="360" y1="178" x2="360" y2="855" stroke="#888" stroke-width="0.5" stroke-dasharray="4 3" opacity="0.2" marker-end="url(#arrow)"/>
+<line x1="520" y1="178" x2="620" y2="921" stroke="#888" stroke-width="0.5" stroke-dasharray="4 3" opacity="0.2" marker-end="url(#arrow)"/>
+
+<!-- OBSERVABILITY APP -->
+<g class="node c-green">
+  <rect x="44" y="1090" width="632" height="56" rx="8"/>
+  <text class="th" x="360" y="1110" text-anchor="middle" dominant-baseline="central">Observability app</text>
+  <text class="ts" x="360" y="1130" text-anchor="middle" dominant-baseline="central">Actions · task progress · agent metrics · session logs · stuck-loop alerts · token cost trend</text>
+</g>
+
+<!-- Context store → Obs app -->
+<line x1="360" y1="971" x2="360" y2="1090" stroke="#888" stroke-width="1" marker-end="url(#arrow)" opacity="0.4"/>
+
+</svg>
+</body>
+</html>

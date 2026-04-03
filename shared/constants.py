@@ -60,6 +60,11 @@ HEALTH_POLL_INTERVAL_S: int = 15
 # Dead agent threshold: consecutive failures before escalation
 HEALTH_MAX_RETRIES: int = 3
 
+# ── SME cache (Redis L1 + Postgres L2) ────────────────────────────────────────
+
+# TTL for SME response cache entries (seconds) — 24h per CLAUDE.md
+SME_CACHE_TTL_S: int = 24 * 60 * 60
+
 # ── Payload size limits ───────────────────────────────────────────────────────
 
 # Maximum payload size before offloading to artifact volume (8 MB)

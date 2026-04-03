@@ -35,6 +35,9 @@ export const CONSTANTS = {
 
   /** Payload size limit before offloading to artifact volume (bytes) */
   MAX_PAYLOAD_BYTES: 8 * 1024 * 1024,
+
+  /** SME cache TTL (Redis + Postgres sme_cache), seconds — 24h */
+  SME_CACHE_TTL_S: 24 * 60 * 60,
 } as const;
 
 export type ConstantKey = keyof typeof CONSTANTS;
